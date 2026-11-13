@@ -1,0 +1,11 @@
+{
+  "name": "college-project",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix eventsnap-react run dev",
+    "build": "npm --prefix eventsnap-react run build",
+    "preview": "npm --prefix eventsnap-react run preview",
+    "start": "npm --prefix eventsnap-react run dev",
+    "postinstall": "npm --prefix eventsnap-react install"
+  }
+}
