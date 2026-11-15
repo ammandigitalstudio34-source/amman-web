@@ -1,15 +1,73 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../AppContext";
 import { CITY_NAMES } from "../data";
-import { initials, inr, readPhoto, scrollToId } from "../utils";
+import NotificationSettings from "./NotificationSettings";
+import { fmtTime, initials, inr, readPhoto, scrollToId } from "../utils";
 import { Arrow, Check } from "./Icons";
 
 const TAGS = ["Wedding", "Birthday", "Events", "Portrait", "Baby Shoot", "Products"];
 const EXPS = ["0–1 years", "1–3 years", "3–5 years", "5–10 years", "10+ years"];
 const fmtPhone = (p) => String(p).replace(/(\d{5})(\d{5})/, "$1 $2");
 
+function BookingList({ bookings, audience, onRespond, onDelete, respondingId, deletingId }) {
+  if (!bookings.length) {
+    return <p>No {audience === "photographer" ? "booking requests" : "bookings"} yet.</p>;
+  }
+  return (
+    <ul>
+      {bookings.map((booking) => {
+        const status = booking.status === "confirmed" ? "Confirmed" : booking.status === "busy" ? "Busy" : "Pending";
+        const date = booking.date
+          ? new Date(`${booking.date}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+          : "";
+        return (
+          <li key={booking.id}>
+            <b>{booking.title}</b>
+            <span>{audience === "photographer"
+              ? `Requested by ${booking.by || "EventSnap client"}`
+              : `Photographer: ${booking.requestedPhotographerName || booking.photographer || "EventSnap photographer"}`}</span>
+            <span>{booking.city} · {booking.venue}</span>
+            <span>{date} · {fmtTime(booking.time)}</span>
+            <em className={booking.status === "confirmed" ? "confirmed" : booking.status === "busy" ? "busy" : ""}>{status}</em>
+            {audience === "customer" && booking.status === "confirmed" && (
+              <span className="booking-response" role="status">
+                {booking.photographer || booking.requestedPhotographerName || "The photographer"} confirmed your booking.
+              </span>
+            )}
+            {audience === "customer" && booking.status === "busy" && (
+              <span className="booking-response busy" role="status">
+                {booking.photographer || booking.requestedPhotographerName || "The photographer"} is unavailable for this date. Please choose another date or photographer.
+              </span>
+            )}
+            {audience === "photographer" && booking.status === "open" && (
+              <div className="profile-booking-actions">
+                <button type="button" onClick={() => onRespond(booking, "confirmed")} disabled={respondingId === booking.id}>
+                  {respondingId === booking.id ? "Updating…" : "Confirm"}
+                </button>
+                <button type="button" onClick={() => onRespond(booking, "busy")} disabled={respondingId === booking.id}>
+                  {respondingId === booking.id ? "Updating…" : "Busy"}
+                </button>
+              </div>
+            )}
+            <div className="profile-booking-actions">
+              <button
+                type="button"
+                className="profile-delete-button"
+                onClick={() => onDelete(booking, audience)}
+                disabled={deletingId === booking.id}
+              >
+                {deletingId === booking.id ? "Deleting…" : "Delete booking"}
+              </button>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export default function JoinModal() {
-  const { joinOpen, setJoinOpen, city, authUser, authReady, signInWithGoogle, signOutGoogle, myProfile, createProfile, deleteMyProfile, setFpFilter, setFpCity, setFpShowAll, setLocation, setBoard, toast } = useApp();
+  const { joinOpen, setJoinOpen, city, authUser, authReady, signInWithGooglePopup, signOutGoogle, myProfile, gigs, conversations, isConversationUnread, selectConversation, createProfile, deleteMyProfile, deleteGig, respondToBooking, setFpFilter, setFpCity, setFpShowAll, setLocation, setBoard, toast } = useApp();
   const empty = () => ({ name: "", phone: "", city, area: "", tags: ["Wedding"], price: 5000, exp: "3–5 years" });
   const [step, setStep] = useState(1);
   const [f, setF] = useState(empty);
@@ -19,6 +77,8 @@ export default function JoinModal() {
   const [createdProfile, setCreatedProfile] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [respondingId, setRespondingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
   const nameRef = useRef(null);
 
   // every time it opens: show your profile, or a fresh form
@@ -60,7 +120,7 @@ export default function JoinModal() {
   const googleSignIn = async () => {
     setAuthBusy(true);
     setAuthError("");
-    try { await signInWithGoogle(); }
+    try { await signInWithGooglePopup(); }
     catch (error) { setAuthError(`Could not sign in: ${error.message}`); }
     finally { setAuthBusy(false); }
   };
@@ -110,6 +170,48 @@ export default function JoinModal() {
   };
 
   const p = myProfile || createdProfile;
+  const profileBookings = p
+    ? gigs.filter((gig) => gig.requestedPhotographerUid === (p.ownerUid || p.id))
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    : [];
+  const profileConversations = p
+    ? conversations.filter((conversation) => conversation.photographerUid === (p.ownerUid || p.id))
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
+    : [];
+  const unreadMessages = profileConversations.filter(isConversationUnread).length;
+  const customerBookings = authUser
+    ? gigs.filter((gig) => gig.ownerUid === authUser.uid && gig.requestedPhotographerUid)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    : [];
+  const respond = async (booking, decision) => {
+    setRespondingId(booking.id);
+    try {
+      await respondToBooking(booking, decision);
+      toast(decision === "confirmed"
+        ? `Confirmed ${booking.title}. Other requests for that date are marked busy.`
+        : `Marked ${booking.title} and other requests for that date busy.`);
+    } catch (error) {
+      toast(`Could not update this booking: ${error.message}`);
+    } finally {
+      setRespondingId(null);
+    }
+  };
+  const removeBooking = async (booking, audience) => {
+    const item = audience === "photographer" ? "booking request" : "booking";
+    const otherParty = audience === "photographer" ? "customer" : "photographer";
+    if (!window.confirm(`Delete this ${item}? It will be removed for both you and the ${otherParty}.`)) return;
+    setDeletingId(booking.id);
+    try {
+      const result = await deleteGig(booking);
+      toast(result.notificationSent === false && booking.status === "confirmed"
+        ? "Booking deleted, but its push notification could not be delivered."
+        : "Booking deleted.");
+    } catch (error) {
+      toast(`Could not delete this booking: ${error.message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
   const err = (k, msg) => <span className="jm-err">{msg}</span>;
 
   return (
@@ -142,8 +244,16 @@ export default function JoinModal() {
 
         {step === 1 && authReady && authUser && (
           <form onSubmit={next} noValidate>
+            <NotificationSettings user={authUser} />
+            <section className="profile-bookings" aria-labelledby="customerBookingsTitle">
+              <h4 id="customerBookingsTitle">My bookings <span>{customerBookings.length}</span></h4>
+              <BookingList bookings={customerBookings} audience="customer" onDelete={removeBooking} deletingId={deletingId} />
+            </section>
             <h3 id="jTitle">Join as a <span>Photographer</span></h3>
             <p className="sub">Get alerts for functions near you. It takes less than a minute.</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+              <button type="button" className="jm-del" onClick={googleSignOut}>Log out</button>
+            </div>
             <div className="field full">
               <label htmlFor="jPhoto">Profile photo <span style={{ fontWeight: 500, color: "var(--muted)" }}>(optional)</span></label>
               <input id="jPhoto" type="file" accept="image/*" onChange={choosePhoto} />
@@ -223,6 +333,36 @@ export default function JoinModal() {
                 <div className="tg">{p.tags.map((t) => <span key={t}>{t}</span>)}</div>
               </div>
             </div>
+            <NotificationSettings user={authUser} />
+            <section className="profile-bookings" aria-labelledby="profileMessagesTitle">
+              <h4 id="profileMessagesTitle">Messages <span>{unreadMessages}</span></h4>
+              {!profileConversations.length
+                ? <p>No customer messages yet.</p>
+                : <ul className="profile-message-list">
+                  {profileConversations.map((conversation) => {
+                    const unread = isConversationUnread(conversation);
+                    return (
+                      <li key={conversation.id} className={unread ? "profile-message-unread" : ""}>
+                        <b>{conversation.customerName || "Customer"}</b>
+                        <span>{conversation.lastMessageText || "No messages yet"}</span>
+                        <time>{conversation.lastMessageAt ? new Date(conversation.lastMessageAt).toLocaleString() : ""}</time>
+                        {unread && <em className="profile-message-new">New</em>}
+                        <div className="profile-booking-actions">
+                          <button type="button" onClick={() => { close(); selectConversation(conversation); }}>Open chat</button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>}
+            </section>
+            <section className="profile-bookings" aria-labelledby="profileBookingsTitle">
+              <h4 id="profileBookingsTitle">Booking requests <span>{profileBookings.length}</span></h4>
+              <BookingList bookings={profileBookings} audience="photographer" onRespond={respond} onDelete={removeBooking} respondingId={respondingId} deletingId={deletingId} />
+            </section>
+            <section className="profile-bookings" aria-labelledby="customerBookingsProfileTitle">
+              <h4 id="customerBookingsProfileTitle">My bookings <span>{customerBookings.length}</span></h4>
+              <BookingList bookings={customerBookings} audience="customer" onDelete={removeBooking} deletingId={deletingId} />
+            </section>
             <div className="jm-actions">
               <button type="button" className="jm-ghost" onClick={seeCard}>View my card</button>
               <button type="button" className="jm-primary" onClick={findWork}>Find functions near me</button>

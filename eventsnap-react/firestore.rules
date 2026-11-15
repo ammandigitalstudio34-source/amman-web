@@ -36,19 +36,40 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.status == "open"
-        && !request.resource.data.keys().hasAny(["phone", "notes"]);
+        && !request.resource.data.keys().hasAny(["phone", "notes"])
+        && (!request.resource.data.keys().hasAny(["requestedPhotographerUid"])
+          || (request.resource.data.requestedPhotographerUid is string
+            && exists(/databases/$(database)/documents/profiles/$(request.resource.data.requestedPhotographerUid))
+            && (!get(/databases/$(database)/documents/profiles/$(request.resource.data.requestedPhotographerUid)).data.keys().hasAny(["busyDates"])
+              || !(request.resource.data.date in get(/databases/$(database)/documents/profiles/$(request.resource.data.requestedPhotographerUid)).data.busyDates))));
       allow update: if isAdmin()
         || (signedIn()
           && resource.data.status == "open"
-          && request.resource.data.status == "confirmed"
           && request.resource.data.ownerUid == resource.data.ownerUid
           && request.resource.data.photographerUid == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(["status", "photographer", "photographerUid", "confirmedAt"])
-          && hasVerifiedProfile(request.auth.uid)
           && request.resource.data.photographer
-            == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.name);
-      allow delete: if isAdmin() || (signedIn() && request.auth.uid == resource.data.ownerUid);
+            == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.name
+          && (!request.resource.data.keys().hasAny(["requestedPhotographerUid"])
+            || request.resource.data.requestedPhotographerUid == request.auth.uid)
+          && (
+            (request.resource.data.status == "confirmed"
+              && hasVerifiedProfile(request.auth.uid)
+              && (!get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.keys().hasAny(["busyDates"])
+                || !(resource.data.date in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.busyDates))
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(["status", "photographer", "photographerUid", "confirmedAt"]))
+            || (request.resource.data.status == "busy"
+              && request.resource.data.keys().hasAny(["requestedPhotographerUid"])
+              && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(["status", "photographer", "photographerUid", "busyAt"]))
+          ));
+      allow delete: if isAdmin()
+        || (signedIn() && request.auth.uid == resource.data.ownerUid)
+        || (signedIn()
+          && ((resource.data.keys().hasAny(["requestedPhotographerUid"])
+              && request.auth.uid == resource.data.requestedPhotographerUid)
+            || (resource.data.keys().hasAny(["photographerUid"])
+              && request.auth.uid == resource.data.photographerUid)));
     }
 
     match /gigPrivate/{gigId} {
@@ -61,7 +82,14 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && getAfter(/databases/$(database)/documents/gigs/$(gigId)).data.ownerUid == request.auth.uid;
       allow update: if isAdmin();
-      allow delete: if isAdmin() || (signedIn() && request.auth.uid == resource.data.ownerUid);
+      allow delete: if isAdmin()
+        || (signedIn() && request.auth.uid == resource.data.ownerUid)
+        || (signedIn()
+          && exists(/databases/$(database)/documents/gigs/$(gigId))
+          && ((get(/databases/$(database)/documents/gigs/$(gigId)).data.keys().hasAny(["requestedPhotographerUid"])
+              && request.auth.uid == get(/databases/$(database)/documents/gigs/$(gigId)).data.requestedPhotographerUid)
+            || (get(/databases/$(database)/documents/gigs/$(gigId)).data.keys().hasAny(["photographerUid"])
+              && request.auth.uid == get(/databases/$(database)/documents/gigs/$(gigId)).data.photographerUid)));
     }
 
     match /conversations/{conversationId} {
@@ -110,10 +138,43 @@ service cloud.firestore {
             && ((request.resource.data.senderRole == "customer"
                 && request.auth.uid == parentConversation().customerUid)
               || (request.resource.data.senderRole == "photographer"
-                && request.auth.uid == parentConversation().photographerUid
-                && hasVerifiedProfile(request.auth.uid)))));
+                && request.auth.uid == parentConversation().photographerUid))));
         allow update, delete: if isAdmin();
       }
+    }
+
+    match /fcmTokens/{userId} {
+      allow read, write: if false;
+
+      match /devices/{deviceId} {
+        function ownsToken() {
+          return signedIn() && request.auth.uid == userId;
+        }
+
+        function validTokenData() {
+          return request.resource.data.keys().hasOnly(["uid", "token", "updatedAt"])
+            && request.resource.data.keys().hasAll(["uid", "token", "updatedAt"])
+            && request.resource.data.uid == userId
+            && request.resource.data.token is string
+            && request.resource.data.token.size() > 0
+            && request.resource.data.token.size() <= 4096
+            && request.resource.data.updatedAt is timestamp;
+        }
+
+        allow get: if ownsToken()
+          && (!exists(/databases/$(database)/documents/fcmTokens/$(userId)/devices/$(deviceId))
+            || resource.data.uid == userId);
+        allow list: if ownsToken() && resource.data.uid == userId;
+        allow create: if ownsToken() && validTokenData();
+        allow update: if ownsToken()
+          && resource.data.uid == userId
+          && validTokenData();
+        allow delete: if ownsToken() && resource.data.uid == userId;
+      }
+    }
+
+    match /notificationEvents/{eventId} {
+      allow read, write: if false;
     }
   }
 }

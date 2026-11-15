@@ -1,10 +1,10 @@
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { getApps, initializeApp } from "firebase/app";
 import { getAnalytics, isSupported } from "firebase/analytics";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -14,20 +14,28 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-const missingConfig = Object.entries(firebaseConfig)
-  .filter(([key, value]) => key !== "measurementId" && !value)
-  .map(([key]) => key);
+const envNames = {
+  apiKey: "VITE_FIREBASE_API_KEY",
+  authDomain: "VITE_FIREBASE_AUTH_DOMAIN",
+  projectId: "VITE_FIREBASE_PROJECT_ID",
+  storageBucket: "VITE_FIREBASE_STORAGE_BUCKET",
+  messagingSenderId: "VITE_FIREBASE_MESSAGING_SENDER_ID",
+  appId: "VITE_FIREBASE_APP_ID",
+};
 
-if (missingConfig.length) {
-  throw new Error(`Missing Firebase configuration: ${missingConfig.join(", ")}`);
-}
+export const missingFirebaseConfig = Object.entries(firebaseConfig)
+  .filter(([key, value]) => key !== "measurementId" && !String(value || "").trim())
+  .map(([key]) => envNames[key]);
 
-export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: "select_account" });
-export const db = getFirestore(app);
-export const storage = getStorage(app);
-export const analytics = isSupported().then((supported) => (
-  supported ? getAnalytics(app) : null
-));
+const configured = missingFirebaseConfig.length === 0;
+const existingApp = getApps().find((candidate) => candidate.name === "[DEFAULT]");
+
+export const app = configured ? existingApp || initializeApp(firebaseConfig) : null;
+export const auth = app ? getAuth(app) : null;
+export const googleProvider = app ? new GoogleAuthProvider() : null;
+if (googleProvider) googleProvider.setCustomParameters({ prompt: "select_account" });
+export const db = app ? getFirestore(app) : null;
+export const storage = app ? getStorage(app) : null;
+export const analytics = app
+  ? isSupported().then((supported) => (supported ? getAnalytics(app) : null))
+  : Promise.resolve(null);

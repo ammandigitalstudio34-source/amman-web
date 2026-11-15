@@ -36,7 +36,10 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.status == "open"
-        && !request.resource.data.keys().hasAny(["phone", "notes"]);
+        && !request.resource.data.keys().hasAny(["phone", "notes"])
+        && (!request.resource.data.keys().hasAny(["requestedPhotographerUid"])
+          || (request.resource.data.requestedPhotographerUid is string
+            && exists(/databases/$(database)/documents/profiles/$(request.resource.data.requestedPhotographerUid))));
       allow update: if isAdmin()
         || (signedIn()
           && resource.data.status == "open"
@@ -110,10 +113,43 @@ service cloud.firestore {
             && ((request.resource.data.senderRole == "customer"
                 && request.auth.uid == parentConversation().customerUid)
               || (request.resource.data.senderRole == "photographer"
-                && request.auth.uid == parentConversation().photographerUid
-                && hasVerifiedProfile(request.auth.uid)))));
+                && request.auth.uid == parentConversation().photographerUid))));
         allow update, delete: if isAdmin();
       }
+    }
+
+    match /fcmTokens/{userId} {
+      allow read, write: if false;
+
+      match /devices/{deviceId} {
+        function ownsToken() {
+          return signedIn() && request.auth.uid == userId;
+        }
+
+        function validTokenData() {
+          return request.resource.data.keys().hasOnly(["uid", "token", "updatedAt"])
+            && request.resource.data.keys().hasAll(["uid", "token", "updatedAt"])
+            && request.resource.data.uid == userId
+            && request.resource.data.token is string
+            && request.resource.data.token.size() > 0
+            && request.resource.data.token.size() <= 4096
+            && request.resource.data.updatedAt is timestamp;
+        }
+
+        allow get: if ownsToken()
+          && (!exists(/databases/$(database)/documents/fcmTokens/$(userId)/devices/$(deviceId))
+            || resource.data.uid == userId);
+        allow list: if ownsToken() && resource.data.uid == userId;
+        allow create: if ownsToken() && validTokenData();
+        allow update: if ownsToken()
+          && resource.data.uid == userId
+          && validTokenData();
+        allow delete: if ownsToken() && resource.data.uid == userId;
+      }
+    }
+
+    match /notificationEvents/{eventId} {
+      allow read, write: if false;
     }
   }
 }

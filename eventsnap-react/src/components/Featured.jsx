@@ -9,9 +9,10 @@ const FILTER_ICONS = {
 };
 
 function PhotographerCard({ p, index }) {
-  const { favs, toggleFav, bookPhotographer, openChat, unreadFor } = useApp();
+  const { authUser, favs, toggleFav, bookPhotographer, openChat, unreadFor } = useApp();
   const src = p.photo || (p.img ? "/" + p.img : "");
-  const hasPhoto = useImageExists(src);
+  const showPhoto = !!authUser;
+  const hasPhoto = showPhoto && useImageExists(src);
   const vars = { "--skin": p.skin, "--hair": p.hair, "--shirt": p.shirt, "--cam": "#141418" };
   const fav = favs.includes(p.n);
   const unread = unreadFor(p);
@@ -28,7 +29,7 @@ function PhotographerCard({ p, index }) {
       <div className="pc-body">
         <div className="pc-top">
           <div className="pc-av" style={{ "--avbg": p.av }}>
-            {p.photo ? <img src={p.photo} alt="" /> : <svg width="56" height="56" viewBox="0 0 60 60" style={vars}><use href="#headshot" /></svg>}
+            {showPhoto && p.photo ? <img src={p.photo} alt="" /> : <svg width="56" height="56" viewBox="0 0 60 60" style={vars}><use href="#headshot" /></svg>}
             <i />
           </div>
           <div className="pc-name">

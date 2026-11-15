@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import {
+  EmailAuthProvider, getRedirectResult, linkWithCredential, onAuthStateChanged, signInWithEmailAndPassword,
+  signInWithPopup, signInWithRedirect, signOut,
+} from "firebase/auth";
 import {
   addDoc, collection, deleteDoc, deleteField, doc, getDocs, onSnapshot, orderBy, query, updateDoc, writeBatch,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase";
+import { sendNotificationEvent } from "../notifications";
 import { dayLabel, hhmm, initials, inr, useStored } from "../utils";
 import { Bubble, CameraFill, Grid, LogoMark, Send } from "../components/Icons";
 import s from "./admin.module.css";
@@ -12,21 +16,61 @@ import s from "./admin.module.css";
 
 const cx = (...a) => a.filter(Boolean).join(" ");
 const ADMIN_UID = "QXpWsJiQE9N0e4lb12J2oFqUfyk2";
+const authErrorMessage = (error) => {
+  if (["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found"].includes(error.code)) {
+    return "Email or password is incorrect, or no password is linked to this Firebase account. If the admin account only uses Google, use “Set up password with Google” below.";
+  }
+  if (error.code === "auth/operation-not-allowed") {
+    return "This sign-in provider is disabled. Enable Google and/or Email/Password in Firebase Console → Authentication → Sign-in method.";
+  }
+  if (error.code === "auth/unauthorized-domain") {
+    return "This website domain is not authorized for Firebase Authentication. Add it under Firebase Console → Authentication → Settings → Authorized domains.";
+  }
+  if (error.code === "auth/email-already-in-use") {
+    return "This email belongs to another Firebase account and cannot be linked to the authorized admin account.";
+  }
+  return `Could not authenticate: ${error.message}`;
+};
 const ago = (t) => {
   const sec = (Date.now() - t) / 1000;
   if (sec < 60) return "just now"; if (sec < 3600) return Math.floor(sec / 60) + " min ago"; if (sec < 86400) return Math.floor(sec / 3600) + " h ago";
   return new Date(t).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 };
-function Login({ onSignIn, busy, error }) {
+function Login({ onSignIn, onSignInGoogle, onSetupPassword, busy, error }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
   return (
     <div className={s.login}>
       <div>
         <div className={s.brand}><LogoMark simple /><div><b>Event<em>Snap</em></b><small>Admin panel</small></div></div>
         <h1>Admin login</h1>
-        <p>Sign in with the authorized Google account to manage EventSnap.</p>
+        <p>Sign in with your authorized admin email and password.</p>
         <div className={s.err} role="alert">{error}</div>
-        <button type="button" className={cx(s.btn, s.btnP)} style={{ width: "100%" }} onClick={onSignIn} disabled={busy}>
-          {busy ? "Signing in..." : "Continue with Google"}
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          onSignIn(email, password);
+        }}>
+          <div className={s.fld}>
+            <label htmlFor="admin-email">Email</label>
+            <input id="admin-email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required />
+          </div>
+          <div className={s.fld}>
+            <label htmlFor="admin-password">Password</label>
+            <input id="admin-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+          </div>
+          <button type="submit" className={cx(s.btn, s.btnP)} style={{ width: "100%" }} disabled={busy}>
+            {busy ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
+        <button type="button" className={cx(s.btn, s.btnG)} style={{ width: "100%", marginTop: 10 }} onClick={onSignInGoogle} disabled={busy}>
+          Continue with Google
+        </button>
+        <p style={{ margin: "16px 0 8px", fontSize: ".8rem" }}>
+          First time? Link a password to the authorized Google admin account.
+        </p>
+        <button type="button" className={cx(s.btn, s.btnG)} style={{ width: "100%" }} onClick={() => onSetupPassword(email, password)} disabled={busy}>
+          Set up password with Google
         </button>
         <p style={{ textAlign: "center", margin: "16px 0 0" }}><a href="/" style={{ color: "#7b2ff7", fontWeight: 700 }}>← Back to website</a></p>
       </div>
@@ -38,28 +82,78 @@ export default function Admin() {
   const [user, setUser] = useState(auth.currentUser);
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [settingUpPassword, setSettingUpPassword] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => onAuthStateChanged(auth, (nextUser) => {
-    setUser(nextUser);
     setChecking(false);
     if (nextUser && nextUser.uid !== ADMIN_UID) {
-      setError("This Google account is not authorized to access the admin panel.");
+      setError("This account is not authorized to access the admin panel.");
+      setUser(null);
+      signOut(auth).catch((signOutError) => {
+        setError(`Could not sign out unauthorized account: ${signOutError.message}`);
+      });
+      return;
     }
+    setUser(nextUser);
   }), []);
+  useEffect(() => {
+    getRedirectResult(auth).catch((redirectError) => {
+      setError(authErrorMessage(redirectError));
+    });
+  }, []);
 
-  const login = async () => {
+  const login = async (email, password) => {
     setBusy(true);
+    setError("");
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (signInError) {
+      setError(authErrorMessage(signInError));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const loginWithGoogle = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await signInWithRedirect(auth, googleProvider);
+    } catch (signInError) {
+      setError(authErrorMessage(signInError));
+      setBusy(false);
+    }
+  };
+  const setupPassword = async (email, password) => {
+    if (!email.trim() || !password) {
+      setError("Enter the email and password you want to use before setting up password sign-in.");
+      return;
+    }
+
+    setBusy(true);
+    setSettingUpPassword(true);
     setError("");
     try {
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user.uid !== ADMIN_UID) {
         await signOut(auth);
-        setError("This Google account is not authorized to access the admin panel.");
+        throw new Error("This Google account is not authorized to access the admin panel.");
       }
-    } catch (signInError) {
-      setError(`Could not sign in: ${signInError.message}`);
+
+      const credential = EmailAuthProvider.credential(email.trim(), password);
+      await linkWithCredential(result.user, credential);
+    } catch (setupError) {
+      let message = authErrorMessage(setupError);
+      if (auth.currentUser?.uid === ADMIN_UID) {
+        try {
+          await signOut(auth);
+        } catch (signOutError) {
+          message += ` Could not sign out afterward: ${signOutError.message}`;
+        }
+      }
+      setError(message);
     } finally {
+      setSettingUpPassword(false);
       setBusy(false);
     }
   };
@@ -76,9 +170,9 @@ export default function Admin() {
     <div className={s.root}>
       {checking
         ? <div className={s.login}><div><p>Checking admin access…</p></div></div>
-        : authorized
+        : authorized && !settingUpPassword
         ? <Panel onLogout={logout} />
-        : <Login onSignIn={login} busy={busy} error={error} />}
+        : <Login onSignIn={login} onSignInGoogle={loginWithGoogle} onSetupPassword={setupPassword} busy={busy} error={error} />}
     </div>
   );
 }
@@ -184,12 +278,18 @@ function Panel({ onLogout }) {
     const clean = text.trim();
     if (!clean || !conversationId) return;
     const now = Date.now();
-    await addDoc(collection(db, "conversations", conversationId, "messages"), {
+    const message = await addDoc(collection(db, "conversations", conversationId, "messages"), {
       senderUid: ADMIN_UID, senderRole: "admin", text: clean, t: now,
     });
     await updateDoc(doc(db, "conversations", conversationId), {
       lastMessageText: clean, lastMessageAt: now, lastSenderRole: "admin", updatedAt: now,
     });
+    try {
+      await sendNotificationEvent({ type: "new_message", conversationId, messageId: message.id }, auth.currentUser);
+    } catch (error) {
+      console.error("The admin reply was saved but its push notification could not be sent.", error);
+      toast("Reply sent, but its push notification could not be sent.");
+    }
   };
   const deleteConversation = async (conversationId) => {
     const messages = await getDocs(collection(db, "conversations", conversationId, "messages"));
@@ -207,12 +307,10 @@ function Panel({ onLogout }) {
   };
   const updateProfile = (profile, changes) => updateDoc(doc(db, "profiles", profile.id), changes);
   const removeProfile = (profile) => deleteDoc(doc(db, "profiles", profile.id));
-  const removeGig = async (gig) => {
-    const batch = writeBatch(db);
-    batch.delete(doc(db, "gigs", gig.id));
-    batch.delete(doc(db, "gigPrivate", gig.id));
-    await batch.commit();
-  };
+  const removeGig = (gig) => sendNotificationEvent(
+    { type: "booking_deleted", gigId: gig.id },
+    auth.currentUser,
+  );
   const updateGig = (gig, changes) => {
     const update = Object.fromEntries(Object.entries(changes).map(([key, value]) => [
       key, value === null ? deleteField() : value,
@@ -449,12 +547,24 @@ function Functions({ gigs, toast, updateGig, removeGig }) {
   const reopen = async (g) => {
     try {
       await updateGig(g, { status: "open", photographer: null, photographerUid: null, confirmedAt: null });
+      try {
+        await sendNotificationEvent({ type: "booking_reopened", gigId: g.id }, auth.currentUser);
+      } catch (error) {
+        console.error("The function was reopened but its push notifications could not be sent.", error);
+        toast("Function reopened, but its push notifications could not be sent.");
+        return;
+      }
       toast(`${g.title} is open again.`);
     } catch (error) { toast(`Could not reopen the function: ${error.message}`); }
   };
   const del = async (g) => {
     if (!window.confirm(`Delete “${g.title}”?`)) return;
-    try { await removeGig(g); toast("Function deleted."); }
+    try {
+      const result = await removeGig(g);
+      toast(result.notificationSent === false && g.status === "confirmed"
+        ? "Function deleted, but its push notification could not be delivered."
+        : "Function deleted.");
+    }
     catch (error) { toast(`Could not delete the function: ${error.message}`); }
   };
   return (

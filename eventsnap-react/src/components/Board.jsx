@@ -117,12 +117,13 @@ function ConfirmModal({ gig, onClose }) {
 }
 
 export default function Board() {
-  const { city, setLocation, gigs, board, setBoard } = useApp();
+  const { city, authUser, setLocation, gigs, board, setBoard } = useApp();
   const [confirmGig, setConfirmGig] = useState(null);
   const radius = +board.radius;
 
   const list = gigs
     .filter((g) => daysUntil(g.date) >= 0)
+    .filter((g) => !g.requestedPhotographerUid || g.requestedPhotographerUid === authUser?.uid)
     .map((g) => ({ ...g, dist: km(city, g.city) }))
     .filter((g) => board.status === "all" || g.status === board.status)
     .filter((g) => board.type === "all" || g.type === board.type)

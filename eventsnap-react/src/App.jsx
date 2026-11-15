@@ -11,6 +11,7 @@ import PostFunction from "./components/PostFunction";
 import { Cta, Faq, Footer, ForPhotographers, Stories } from "./components/Sections";
 import JoinModal from "./components/JoinModal";
 import Chat from "./components/Chat";
+import BookingModal from "./components/BookingModal";
 import BottomNav from "./components/BottomNav";
 import Toast from "./components/Toast";
 import { SvgDefs } from "./components/Icons";
@@ -88,6 +89,7 @@ function Site() {
       </main>
       <Footer />
       <JoinModal />
+      <BookingModal />
       <Chat />
       <BottomNav page={page} />
       <Toast />

@@ -7,12 +7,10 @@ import { Send } from "./Icons";
    (the customer here, the photographer from their own profile, or the admin page). */
 export default function Chat() {
   const {
-    authUser, signInWithGoogle, chatWith: p, closeChat, conversations, selectedConversation, messages, selectConversation, returnToInbox,
+    authUser, signInAsGuest, chatWith: p, closeChat, conversations, selectedConversation, messages, selectConversation, returnToInbox,
     sendChat, markSeen, bookPhotographer, toast,
   } = useApp();
   const [text, setText] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState("");
   const bodyRef = useRef(null), inputRef = useRef(null);
   const list = messages;
 
@@ -42,13 +40,6 @@ export default function Chat() {
     } catch (error) {
       toast(`Could not send this message: ${error.message}`);
     }
-  };
-  const signIn = async () => {
-    setAuthBusy(true);
-    setAuthError("");
-    try { await signInWithGoogle(); }
-    catch (error) { setAuthError(`Could not sign in: ${error.message}`); }
-    finally { setAuthBusy(false); }
   };
   const inbox = p.mine && !selectedConversation;
   const photographerThreads = conversations.filter((conversation) => conversation.photographerUid === p.ownerUid);
@@ -111,21 +102,21 @@ export default function Chat() {
             );
           })}
         </div>
-        {!inbox && authUser && <>
+        {!inbox && <>
           <div className="chat-quick">{quick.map((q) => <button type="button" key={q} onClick={() => send(q)}>{q}</button>)}</div>
           <form className="chat-form" autoComplete="off" onSubmit={(e) => { e.preventDefault(); send(text); }}>
             <input ref={inputRef} placeholder={p.mine ? "Reply to your customer…" : "Type a message…"} maxLength={500} aria-label="Message" value={text} onChange={(e) => setText(e.target.value)} />
             <button type="submit" aria-label="Send"><Send /></button>
           </form>
+          {!authUser && (
+            <div className="chat-signin">
+              <p role="status">Guest chat is enabled — your message will be sent publicly.</p>
+              <button type="button" onClick={() => signInAsGuest().catch((error) => toast(`Could not continue as guest: ${error.message}`))}>
+                Continue as guest
+              </button>
+            </div>
+          )}
         </>}
-        {!authUser && (
-          <div className="chat-signin">
-            {authError && <p role="alert">{authError}</p>}
-            <button type="button" onClick={signIn} disabled={authBusy}>
-              {authBusy ? "Connecting to Google…" : "Sign in with Google to message"}
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

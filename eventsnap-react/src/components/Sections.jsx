@@ -117,14 +117,12 @@ export function Footer() {
           </div>
           <div><h4>Platform</h4><ul>
             <li><a href="#board">Live functions</a></li><li><a href="#post">Post a function</a></li><li><a href="#how">How it works</a></li>
-            <li><a href="/admin" className="foot-admin">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" style={{ display: "inline", verticalAlign: -2 }}><path d="M12 2.5 20 5.5v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10v-6z" /></svg> Admin panel</a></li>
           </ul></div>
           <div><h4>Photographers</h4><ul><li><a href="#pros">Join EventSnap</a></li><li><a href="#pros">Earnings</a></li><li><a href="#faq">Verification</a></li></ul></div>
           <div><h4>Contact</h4><ul><li>hello@eventsnap.example</li><li>+91 00000 00000</li><li>Chennai, Tamil Nadu</li></ul></div>
         </div>
         <div className="foot-bottom">
-          <span>© 2026 EventSnap. A concept project. · <a href="/admin" className="foot-admin">Admin login</a></span>
+          <span>© 2026 EventSnap. A concept project.</span>
           <span>Made for photographers, by people who love functions.</span>
         </div>
       </div>

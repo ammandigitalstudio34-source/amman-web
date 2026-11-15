@@ -30,6 +30,14 @@ export default function PostFunction() {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const toggleNeed = (n) => setF({ ...f, needs: f.needs.includes(n) ? f.needs.filter((x) => x !== n) : [...f.needs, n] });
 
+  const signIn = async () => {
+    setAuthBusy(true);
+    setAuthError("");
+    try { await signInWithGoogle(); }
+    catch (error) { setAuthError(`Could not sign in: ${error.message}`); }
+    finally { setAuthBusy(false); }
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     if (!authUser) return toast("Sign in with Google before posting a function.");
@@ -40,14 +48,8 @@ export default function PostFunction() {
     const g = {
       id: Date.now(), title: f.title.trim(), type: f.type, city: f.city, venue: f.venue.trim(), date: f.date, time: f.time,
       hours: +f.hours, budget: +f.budget, needs: f.needs.length ? f.needs : ["Photo"], by: f.name.trim(),
+      ...(f.requestedPhotographerUid ? { requestedPhotographerUid: f.requestedPhotographerUid } : {}),
       phone: f.phone, notes: f.notes.trim(), status: "open",
-    };
-    const signIn = async () => {
-      setAuthBusy(true);
-      setAuthError("");
-      try { await signInWithGoogle(); }
-      catch (error) { setAuthError(`Could not sign in: ${error.message}`); }
-      finally { setAuthBusy(false); }
     };
     try {
       const saved = await addGig(g);
